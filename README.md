@@ -19,5 +19,5 @@ Its release benchmark target covers localized reads, region reads, and batched e
 the scenario, compiler, configuration, and hardware.
 
 The initial measured baseline is recorded in [docs/Benchmarks.md](docs/Benchmarks.md).
-Use the checked-in `windows-msvc-release-benchmark` or `linux-clang-release-benchmark` configure and build preset to
-enable the benchmark-only vcpkg feature and executable.
+Use the checked-in `windows-msvc-benchmark` or `linux-clang-benchmark` configure preset to enable the benchmark-only
+vcpkg feature and executable, then build the corresponding directory under `o/`.

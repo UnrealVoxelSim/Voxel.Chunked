@@ -132,14 +132,14 @@ class Block final
   public:
     [[nodiscard]] Api::CellValue Get(const std::size_t index) const noexcept
     {
-        switch (Encoding_)
+        switch (m_Encoding)
         {
         case Encoding::Uniform:
-            return Uniform_;
+            return m_Uniform;
         case Encoding::Palette:
-            return Palette_[ReadPacked(Packed_, Bits_, index)];
+            return m_Palette[ReadPacked(m_Packed, m_Bits, index)];
         case Encoding::Raw:
-            return Raw_[index];
+            return m_Raw[index];
         }
         assert(false);
         return {};
@@ -155,67 +155,67 @@ class Block final
 
         if (current.IsEmpty() && !desired.IsEmpty())
         {
-            ++NonEmptyCount_;
+            ++m_NonEmptyCount;
         }
         else if (!current.IsEmpty() && desired.IsEmpty())
         {
-            --NonEmptyCount_;
+            --m_NonEmptyCount;
         }
 
-        switch (Encoding_)
+        switch (m_Encoding)
         {
         case Encoding::Uniform:
-            Palette_ = {Uniform_, desired};
-            Bits_ = 1;
-            Packed_.assign(PackedWordCount(Bits_), 0);
-            WritePacked(Packed_, Bits_, index, 1);
-            Encoding_ = Encoding::Palette;
+            m_Palette = {m_Uniform, desired};
+            m_Bits = 1;
+            m_Packed.assign(PackedWordCount(m_Bits), 0);
+            WritePacked(m_Packed, m_Bits, index, 1);
+            m_Encoding = Encoding::Palette;
             return true;
 
         case Encoding::Palette: {
-            const auto iterator = std::find(Palette_.begin(), Palette_.end(), desired);
-            if (iterator != Palette_.end())
+            const auto iterator = std::find(m_Palette.begin(), m_Palette.end(), desired);
+            if (iterator != m_Palette.end())
             {
-                WritePacked(Packed_, Bits_, index,
-                            static_cast<std::uint16_t>(std::distance(Palette_.begin(), iterator)));
+                WritePacked(m_Packed, m_Bits, index,
+                            static_cast<std::uint16_t>(std::distance(m_Palette.begin(), iterator)));
                 return true;
             }
 
-            if (Palette_.size() < 256)
+            if (m_Palette.size() < 256)
             {
-                const auto oldBits = Bits_;
-                Palette_.push_back(desired);
-                Bits_ = RequiredBits(Palette_.size());
-                if (Bits_ != oldBits)
+                const auto oldBits = m_Bits;
+                m_Palette.push_back(desired);
+                m_Bits = RequiredBits(m_Palette.size());
+                if (m_Bits != oldBits)
                 {
-                    std::vector<std::uint64_t> repacked(PackedWordCount(Bits_), 0);
+                    std::vector<std::uint64_t> repacked(PackedWordCount(m_Bits), 0);
                     for (std::size_t cellIndex = 0; cellIndex < BlockCellCount; ++cellIndex)
                     {
-                        const auto paletteIndex = ReadPacked(Packed_, oldBits, cellIndex);
-                        WritePacked(repacked, Bits_, cellIndex, paletteIndex);
+                        const auto paletteIndex = ReadPacked(m_Packed, oldBits, cellIndex);
+                        WritePacked(repacked, m_Bits, cellIndex, paletteIndex);
                     }
-                    Packed_ = std::move(repacked);
+                    m_Packed = std::move(repacked);
                 }
-                WritePacked(Packed_, Bits_, index, static_cast<std::uint16_t>(Palette_.size() - 1));
+                WritePacked(m_Packed, m_Bits, index, static_cast<std::uint16_t>(m_Palette.size() - 1));
                 return true;
             }
 
-            Raw_.resize(BlockCellCount);
+            m_Raw.resize(BlockCellCount);
             for (std::size_t cellIndex = 0; cellIndex < BlockCellCount; ++cellIndex)
             {
-                Raw_[cellIndex] = Palette_[ReadPacked(Packed_, Bits_, cellIndex)];
+                m_Raw[cellIndex] = m_Palette[ReadPacked(m_Packed, m_Bits, cellIndex)];
             }
-            Raw_[index] = desired;
-            Palette_.clear();
-            Palette_.shrink_to_fit();
-            Packed_.clear();
-            Packed_.shrink_to_fit();
-            Encoding_ = Encoding::Raw;
+            m_Raw[index] = desired;
+            m_Palette.clear();
+            m_Palette.shrink_to_fit();
+            m_Packed.clear();
+            m_Packed.shrink_to_fit();
+            m_Encoding = Encoding::Raw;
             return true;
         }
 
         case Encoding::Raw:
-            Raw_[index] = desired;
+            m_Raw[index] = desired;
             return true;
         }
 
@@ -225,7 +225,7 @@ class Block final
 
     [[nodiscard]] bool IsEmpty() const noexcept
     {
-        return NonEmptyCount_ == 0;
+        return m_NonEmptyCount == 0;
     }
 
   private:
@@ -236,13 +236,13 @@ class Block final
         Raw,
     };
 
-    Encoding Encoding_{Encoding::Uniform};
-    Api::CellValue Uniform_{};
-    std::vector<Api::CellValue> Palette_;
-    std::vector<std::uint64_t> Packed_;
-    std::vector<Api::CellValue> Raw_;
-    std::size_t NonEmptyCount_{};
-    std::uint8_t Bits_{};
+    Encoding m_Encoding{Encoding::Uniform};
+    Api::CellValue m_Uniform{};
+    std::vector<Api::CellValue> m_Palette;
+    std::vector<std::uint64_t> m_Packed;
+    std::vector<Api::CellValue> m_Raw;
+    std::size_t m_NonEmptyCount{};
+    std::uint8_t m_Bits{};
 };
 
 struct IndexedMutation final
@@ -292,36 +292,36 @@ Field::Field(const Api::Region bounds)
     {
         throw std::invalid_argument{"Voxel field bounds must form a valid region."};
     }
-    Impl_ = std::make_unique<Impl>(bounds);
+    m_Impl = std::make_unique<Impl>(bounds);
 }
 
 Field::~Field() = default;
 
 Api::Region Field::Bounds() const noexcept
 {
-    Impl_->AssertOwnerThread();
-    return Impl_->Bounds;
+    m_Impl->AssertOwnerThread();
+    return m_Impl->Bounds;
 }
 
 std::expected<Api::CellValue, Api::ReadError> Field::Read(const Api::Position position) const noexcept
 {
-    Impl_->AssertOwnerThread();
-    if (!Impl_->Bounds.Contains(position))
+    m_Impl->AssertOwnerThread();
+    if (!m_Impl->Bounds.Contains(position))
     {
         return std::unexpected{Api::ReadError::OutOfBounds};
     }
-    return Impl_->ReadUnchecked(position);
+    return m_Impl->ReadUnchecked(position);
 }
 
 std::expected<void, Api::ReadError> Field::ReadRegion(const Api::Region region,
                                                       const std::span<Api::CellValue> output) const noexcept
 {
-    Impl_->AssertOwnerThread();
+    m_Impl->AssertOwnerThread();
     if (!region.IsValid())
     {
         return std::unexpected{Api::ReadError::InvalidRegion};
     }
-    if (!Impl_->Bounds.Contains(region))
+    if (!m_Impl->Bounds.Contains(region))
     {
         return std::unexpected{Api::ReadError::OutOfBounds};
     }
@@ -350,8 +350,8 @@ std::expected<void, Api::ReadError> Field::ReadRegion(const Api::Region region,
                 const auto remainingInRegion = static_cast<std::int64_t>(region.Max.X) - static_cast<std::int64_t>(x);
                 const auto runLength =
                     static_cast<std::int32_t>(std::min<std::int64_t>(remainingInBlock, remainingInRegion));
-                const auto iterator = Impl_->Blocks.find(blockCoordinate);
-                if (iterator == Impl_->Blocks.end())
+                const auto iterator = m_Impl->Blocks.find(blockCoordinate);
+                if (iterator == m_Impl->Blocks.end())
                 {
                     std::fill_n(output.begin() + static_cast<std::ptrdiff_t>(outputIndex), runLength, Api::CellValue{});
                     outputIndex += static_cast<std::size_t>(runLength);
@@ -373,15 +373,15 @@ std::expected<void, Api::ReadError> Field::ReadRegion(const Api::Region region,
 
 std::expected<Api::EditResult, Api::EditFailure> Field::Apply(const std::span<const Api::CellMutation> mutations)
 {
-    Impl_->AssertOwnerThread();
+    m_Impl->AssertOwnerThread();
     std::vector<IndexedMutation> ordered;
     ordered.reserve(mutations.size());
     for (std::size_t index = 0; index < mutations.size(); ++index)
     {
-        if (!Impl_->Bounds.Contains(mutations[index].Position))
+        if (!m_Impl->Bounds.Contains(mutations[index].Position))
         {
             return std::unexpected{
-                Api::EditFailure{Api::EditError::OutOfBounds, index, Impl_->ReadUnchecked(mutations[index].Position)}};
+                Api::EditFailure{Api::EditError::OutOfBounds, index, m_Impl->ReadUnchecked(mutations[index].Position)}};
         }
         ordered.push_back({index, &mutations[index]});
     }
@@ -394,13 +394,13 @@ std::expected<Api::EditResult, Api::EditFailure> Field::Apply(const std::span<co
             return std::unexpected{
                 Api::EditFailure{Api::EditError::DuplicatePosition,
                                  std::max(ordered[index - 1].OriginalIndex, ordered[index].OriginalIndex),
-                                 Impl_->ReadUnchecked(ordered[index].Mutation->Position)}};
+                                 m_Impl->ReadUnchecked(ordered[index].Mutation->Position)}};
         }
     }
 
     for (const auto &indexed : ordered)
     {
-        const auto actual = Impl_->ReadUnchecked(indexed.Mutation->Position);
+        const auto actual = m_Impl->ReadUnchecked(indexed.Mutation->Position);
         if (actual != indexed.Mutation->Expected)
         {
             return std::unexpected{Api::EditFailure{Api::EditError::ValueConflict, indexed.OriginalIndex, actual}};
@@ -411,7 +411,7 @@ std::expected<Api::EditResult, Api::EditFailure> Field::Apply(const std::span<co
     for (const auto &indexed : ordered)
     {
         const auto blockCoordinate = ToBlock(indexed.Mutation->Position);
-        auto [iterator, inserted] = Impl_->Blocks.try_emplace(blockCoordinate);
+        auto [iterator, inserted] = m_Impl->Blocks.try_emplace(blockCoordinate);
         static_cast<void>(inserted);
         const auto localIndex = ToIndex(indexed.Mutation->Position, blockCoordinate);
         if (localIndex >= BlockCellCount)
@@ -424,7 +424,7 @@ std::expected<Api::EditResult, Api::EditFailure> Field::Apply(const std::span<co
         }
         if (iterator->second.IsEmpty())
         {
-            Impl_->Blocks.erase(iterator);
+            m_Impl->Blocks.erase(iterator);
         }
     }
 
