@@ -33,4 +33,4 @@ class Field final : public Api::IBounds, public Api::IReader, public Api::IRegio
     std::unique_ptr<Impl> m_Impl;
 };
 
-} // namespace UnrealVoxelSim::Voxel::Chunked
+}

@@ -256,7 +256,7 @@ struct IndexedMutation final
     return left.Mutation->Position < right.Mutation->Position;
 }
 
-} // namespace
+}
 
 class Field::Impl final
 {
@@ -431,4 +431,4 @@ std::expected<Api::EditResult, Api::EditFailure> Field::Apply(const std::span<co
     return Api::EditResult{changedCellCount};
 }
 
-} // namespace UnrealVoxelSim::Voxel::Chunked
+}

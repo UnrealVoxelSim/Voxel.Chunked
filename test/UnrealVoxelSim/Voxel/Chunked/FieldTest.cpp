@@ -167,5 +167,5 @@ TEST(FieldTest, ReportsBoundsAndBufferErrors)
     EXPECT_EQ(field.ReadRegion({{0, 0, 0}, {3, 1, 1}}, output).error(), Api::ReadError::OutOfBounds);
 }
 
-} // namespace
-} // namespace UnrealVoxelSim::Voxel::Chunked
+}
+}

@@ -72,5 +72,5 @@ BENCHMARK(PointRead);
 BENCHMARK(RegionRead);
 BENCHMARK(BatchedEdit);
 
-} // namespace
-} // namespace UnrealVoxelSim::Voxel::Chunked
+}
+}
