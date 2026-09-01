@@ -14,42 +14,12 @@
 
 namespace UnrealVoxelSim::Voxel::Chunked
 {
-	namespace
+	namespace Detail
 	{
 		constexpr std::int32_t BlockEdge = 32;
 		constexpr std::size_t BlockCellCount =
 			static_cast<std::size_t>(BlockEdge) * static_cast<std::size_t>(BlockEdge) * static_cast<std::size_t>(
 				BlockEdge);
-
-		struct BlockCoordinate final
-		{
-			std::int32_t X{};
-			std::int32_t Y{};
-			std::int32_t Z{};
-
-			auto operator<=>(const BlockCoordinate&) const = default;
-		};
-
-		struct BlockCoordinateHash final
-		{
-			[[nodiscard]] std::size_t operator()(const BlockCoordinate coordinate) const noexcept
-			{
-				auto hash = std::hash<std::int32_t>{}(coordinate.X);
-				hash ^= std::hash<std::int32_t>{}(coordinate.Y) + static_cast<std::size_t>(0x9E3779B9U) + (hash << 6U) +
-					(hash >> 2U);
-				hash ^= std::hash<std::int32_t>{}(coordinate.Z) + static_cast<std::size_t>(0x9E3779B9U) + (hash << 6U) +
-					(hash >> 2U);
-				return hash;
-			}
-		};
-
-		struct BlockCoordinateEqual final
-		{
-			[[nodiscard]] bool operator()(const BlockCoordinate left, const BlockCoordinate right) const noexcept
-			{
-				return left.X == right.X && left.Y == right.Y && left.Z == right.Z;
-			}
-		};
 
 		[[nodiscard]] constexpr std::int32_t BlockAxis(const std::int32_t value) noexcept
 		{
@@ -131,124 +101,108 @@ namespace UnrealVoxelSim::Voxel::Chunked
 			words[wordIndex] = (words[wordIndex] & ~mask) | (static_cast<std::uint64_t>(value) << shift);
 		}
 
-		class Block final
+		Api::CellValue Block::Get(const std::size_t index) const noexcept
 		{
-		public:
-			[[nodiscard]] Api::CellValue Get(const std::size_t index) const noexcept
+			switch (m_Encoding)
 			{
-				switch (m_Encoding)
-				{
-				case Encoding::Uniform:
-					return m_Uniform;
-				case Encoding::Palette:
-					return m_Palette[ReadPacked(m_Packed, m_Bits, index)];
-				case Encoding::Raw:
-					return m_Raw[index];
-				}
-				assert(false);
-				return {};
+			case Encoding::Uniform:
+				return m_Uniform;
+			case Encoding::Palette:
+				return m_Palette[ReadPacked(m_Packed, m_Bits, index)];
+			case Encoding::Raw:
+				return m_Raw[index];
 			}
+			assert(false);
+			return {};
+		}
 
-			[[nodiscard]] bool Set(const std::size_t index, const Api::CellValue desired)
+		bool Block::Set(const std::size_t index, const Api::CellValue desired)
+		{
+			const auto current = Get(index);
+			if (current == desired)
 			{
-				const auto current = Get(index);
-				if (current == desired)
-				{
-					return false;
-				}
-
-				if (current.IsEmpty() && !desired.IsEmpty())
-				{
-					++m_NonEmptyCount;
-				}
-				else if (!current.IsEmpty() && desired.IsEmpty())
-				{
-					--m_NonEmptyCount;
-				}
-
-				switch (m_Encoding)
-				{
-				case Encoding::Uniform:
-					m_Palette = {m_Uniform, desired};
-					m_Bits = 1;
-					m_Packed.assign(PackedWordCount(m_Bits), 0);
-					WritePacked(m_Packed, m_Bits, index, 1);
-					m_Encoding = Encoding::Palette;
-					return true;
-
-				case Encoding::Palette:
-					{
-						const auto iterator = std::find(m_Palette.begin(), m_Palette.end(), desired);
-						if (iterator != m_Palette.end())
-						{
-							WritePacked(m_Packed, m_Bits, index,
-							            static_cast<std::uint16_t>(std::distance(m_Palette.begin(), iterator)));
-							return true;
-						}
-
-						if (m_Palette.size() < 256)
-						{
-							const auto oldBits = m_Bits;
-							m_Palette.push_back(desired);
-							m_Bits = RequiredBits(m_Palette.size());
-							if (m_Bits != oldBits)
-							{
-								std::vector<std::uint64_t> repacked(PackedWordCount(m_Bits), 0);
-								for (std::size_t cellIndex = 0; cellIndex < BlockCellCount; ++cellIndex)
-								{
-									const auto paletteIndex = ReadPacked(m_Packed, oldBits, cellIndex);
-									WritePacked(repacked, m_Bits, cellIndex, paletteIndex);
-								}
-								m_Packed = std::move(repacked);
-							}
-							WritePacked(m_Packed, m_Bits, index, static_cast<std::uint16_t>(m_Palette.size() - 1));
-							return true;
-						}
-
-						m_Raw.resize(BlockCellCount);
-						for (std::size_t cellIndex = 0; cellIndex < BlockCellCount; ++cellIndex)
-						{
-							m_Raw[cellIndex] = m_Palette[ReadPacked(m_Packed, m_Bits, cellIndex)];
-						}
-						m_Raw[index] = desired;
-						m_Palette.clear();
-						m_Palette.shrink_to_fit();
-						m_Packed.clear();
-						m_Packed.shrink_to_fit();
-						m_Encoding = Encoding::Raw;
-						return true;
-					}
-
-				case Encoding::Raw:
-					m_Raw[index] = desired;
-					return true;
-				}
-
-				assert(false);
 				return false;
 			}
 
-			[[nodiscard]] bool IsEmpty() const noexcept
+			if (current.IsEmpty() && !desired.IsEmpty())
 			{
-				return m_NonEmptyCount == 0;
+				++m_NonEmptyCount;
+			}
+			else if (!current.IsEmpty() && desired.IsEmpty())
+			{
+				--m_NonEmptyCount;
 			}
 
-		private:
-			enum class Encoding
+			switch (m_Encoding)
 			{
-				Uniform,
-				Palette,
-				Raw,
-			};
+			case Encoding::Uniform:
+				m_Palette = {m_Uniform, desired};
+				m_Bits = 1;
+				m_Packed.assign(PackedWordCount(m_Bits), 0);
+				WritePacked(m_Packed, m_Bits, index, 1);
+				m_Encoding = Encoding::Palette;
+				return true;
 
-			Encoding m_Encoding{Encoding::Uniform};
-			Api::CellValue m_Uniform{};
-			std::vector<Api::CellValue> m_Palette;
-			std::vector<std::uint64_t> m_Packed;
-			std::vector<Api::CellValue> m_Raw;
-			std::size_t m_NonEmptyCount{};
-			std::uint8_t m_Bits{};
-		};
+			case Encoding::Palette:
+				{
+					const auto iterator = std::find(m_Palette.begin(), m_Palette.end(), desired);
+					if (iterator != m_Palette.end())
+					{
+						WritePacked(m_Packed, m_Bits, index,
+						            static_cast<std::uint16_t>(std::distance(m_Palette.begin(), iterator)));
+						return true;
+					}
+
+					if (m_Palette.size() < 256)
+					{
+						const auto oldBits = m_Bits;
+						m_Palette.push_back(desired);
+						m_Bits = RequiredBits(m_Palette.size());
+						if (m_Bits != oldBits)
+						{
+							std::vector<std::uint64_t> repacked(PackedWordCount(m_Bits), 0);
+							for (std::size_t cellIndex = 0; cellIndex < BlockCellCount; ++cellIndex)
+							{
+								const auto paletteIndex = ReadPacked(m_Packed, oldBits, cellIndex);
+								WritePacked(repacked, m_Bits, cellIndex, paletteIndex);
+							}
+							m_Packed = std::move(repacked);
+						}
+						WritePacked(m_Packed, m_Bits, index, static_cast<std::uint16_t>(m_Palette.size() - 1));
+						return true;
+					}
+
+					m_Raw.resize(BlockCellCount);
+					for (std::size_t cellIndex = 0; cellIndex < BlockCellCount; ++cellIndex)
+					{
+						m_Raw[cellIndex] = m_Palette[ReadPacked(m_Packed, m_Bits, cellIndex)];
+					}
+					m_Raw[index] = desired;
+					m_Palette.clear();
+					m_Palette.shrink_to_fit();
+					m_Packed.clear();
+					m_Packed.shrink_to_fit();
+					m_Encoding = Encoding::Raw;
+					return true;
+				}
+
+			case Encoding::Raw:
+				m_Raw[index] = desired;
+				return true;
+			}
+
+			assert(false);
+			return false;
+		}
+
+		bool Block::IsEmpty() const noexcept
+		{
+			return m_NonEmptyCount == 0;
+		}
+	}
+
+	namespace
+	{
 
 		struct IndexedMutation final
 		{
@@ -262,70 +216,57 @@ namespace UnrealVoxelSim::Voxel::Chunked
 		}
 	}
 
-	class Field::Impl final
-	{
-	public:
-		explicit Impl(const Api::Region bounds) : Bounds(bounds)
-		{
-		}
-
-		void AssertOwnerThread() const noexcept
-		{
-			assert(std::this_thread::get_id() == OwnerThread);
-		}
-
-		[[nodiscard]] Api::CellValue ReadUnchecked(const Api::Position position) const noexcept
-		{
-			const auto blockCoordinate = ToBlock(position);
-			const auto iterator = Blocks.find(blockCoordinate);
-			if (iterator == Blocks.end())
-			{
-				return {};
-			}
-			return iterator->second.Get(ToIndex(position, blockCoordinate));
-		}
-
-		Api::Region Bounds;
-		std::unordered_map<BlockCoordinate, Block, BlockCoordinateHash, BlockCoordinateEqual> Blocks;
-		std::thread::id OwnerThread{std::this_thread::get_id()};
-	};
-
-	Field::Field(const Api::Region bounds)
+	Field::Field(const Api::Region bounds) : m_Bounds(bounds)
 	{
 		if (!bounds.IsValid())
 		{
 			throw std::invalid_argument{"Voxel field bounds must form a valid region."};
 		}
-		m_Impl = std::make_unique<Impl>(bounds);
 	}
 
 	Field::~Field() = default;
 
-	Api::Region Field::Bounds() const noexcept
+	void Field::AssertOwnerThread() const noexcept
 	{
-		m_Impl->AssertOwnerThread();
-		return m_Impl->Bounds;
+		assert(std::this_thread::get_id() == m_OwnerThread);
+	}
+
+	Api::CellValue Field::ReadUnchecked(const Api::Position position) const noexcept
+	{
+		const auto blockCoordinate = Detail::ToBlock(position);
+		const auto iterator = m_Blocks.find(blockCoordinate);
+		if (iterator == m_Blocks.end())
+		{
+			return {};
+		}
+		return iterator->second.Get(Detail::ToIndex(position, blockCoordinate));
+	}
+
+	Api::Region Field::GetBounds() const noexcept
+	{
+		AssertOwnerThread();
+		return m_Bounds;
 	}
 
 	std::expected<Api::CellValue, Api::ReadError> Field::Read(const Api::Position position) const noexcept
 	{
-		m_Impl->AssertOwnerThread();
-		if (!m_Impl->Bounds.Contains(position))
+		AssertOwnerThread();
+		if (!m_Bounds.Contains(position))
 		{
 			return std::unexpected{Api::ReadError::OutOfBounds};
 		}
-		return m_Impl->ReadUnchecked(position);
+		return ReadUnchecked(position);
 	}
 
 	std::expected<void, Api::ReadError> Field::ReadRegion(const Api::Region region,
 	                                                      const std::span<Api::CellValue> output) const noexcept
 	{
-		m_Impl->AssertOwnerThread();
+		AssertOwnerThread();
 		if (!region.IsValid())
 		{
 			return std::unexpected{Api::ReadError::InvalidRegion};
 		}
-		if (!m_Impl->Bounds.Contains(region))
+		if (!m_Bounds.Contains(region))
 		{
 			return std::unexpected{Api::ReadError::OutOfBounds};
 		}
@@ -348,15 +289,15 @@ namespace UnrealVoxelSim::Voxel::Chunked
 				while (x < region.Max.X)
 				{
 					const Api::Position start{x, y, z};
-					const auto blockCoordinate = ToBlock(start);
-					const auto localX = LocalAxis(x, blockCoordinate.X);
-					const auto remainingInBlock = BlockEdge - localX;
+					const auto blockCoordinate = Detail::ToBlock(start);
+					const auto localX = Detail::LocalAxis(x, blockCoordinate.X);
+					const auto remainingInBlock = Detail::BlockEdge - localX;
 					const auto remainingInRegion = static_cast<std::int64_t>(region.Max.X) - static_cast<std::int64_t>(
 						x);
 					const auto runLength =
 						static_cast<std::int32_t>(std::min<std::int64_t>(remainingInBlock, remainingInRegion));
-					const auto iterator = m_Impl->Blocks.find(blockCoordinate);
-					if (iterator == m_Impl->Blocks.end())
+					const auto iterator = m_Blocks.find(blockCoordinate);
+					if (iterator == m_Blocks.end())
 					{
 						std::fill_n(output.begin() + static_cast<std::ptrdiff_t>(outputIndex), runLength,
 						            Api::CellValue{});
@@ -364,7 +305,7 @@ namespace UnrealVoxelSim::Voxel::Chunked
 					}
 					else
 					{
-						auto index = ToIndex(start, blockCoordinate);
+						auto index = Detail::ToIndex(start, blockCoordinate);
 						for (std::int32_t offset = 0; offset < runLength; ++offset)
 						{
 							output[outputIndex++] = iterator->second.Get(index++);
@@ -379,18 +320,18 @@ namespace UnrealVoxelSim::Voxel::Chunked
 
 	std::expected<Api::EditResult, Api::EditFailure> Field::Apply(const std::span<const Api::CellMutation> mutations)
 	{
-		m_Impl->AssertOwnerThread();
+		AssertOwnerThread();
 		std::vector<IndexedMutation> ordered;
 		ordered.reserve(mutations.size());
 		for (std::size_t index = 0; index < mutations.size(); ++index)
 		{
-			if (!m_Impl->Bounds.Contains(mutations[index].Position))
+			if (!m_Bounds.Contains(mutations[index].Position))
 			{
 				return std::unexpected{
 					Api::EditFailure{
 						Api::EditError::OutOfBounds,
 						index,
-						m_Impl->ReadUnchecked(mutations[index].Position)
+						ReadUnchecked(mutations[index].Position)
 					}
 				};
 			}
@@ -406,7 +347,7 @@ namespace UnrealVoxelSim::Voxel::Chunked
 					Api::EditFailure{
 						Api::EditError::DuplicatePosition,
 						std::max(ordered[index - 1].OriginalIndex, ordered[index].OriginalIndex),
-						m_Impl->ReadUnchecked(ordered[index].Mutation->Position)
+						ReadUnchecked(ordered[index].Mutation->Position)
 					}
 				};
 			}
@@ -414,7 +355,7 @@ namespace UnrealVoxelSim::Voxel::Chunked
 
 		for (const auto& indexed : ordered)
 		{
-			const auto actual = m_Impl->ReadUnchecked(indexed.Mutation->Position);
+			const auto actual = ReadUnchecked(indexed.Mutation->Position);
 			if (actual != indexed.Mutation->Expected)
 			{
 				return std::unexpected{Api::EditFailure{Api::EditError::ValueConflict, indexed.OriginalIndex, actual}};
@@ -424,11 +365,11 @@ namespace UnrealVoxelSim::Voxel::Chunked
 		std::size_t changedCellCount = 0;
 		for (const auto& indexed : ordered)
 		{
-			const auto blockCoordinate = ToBlock(indexed.Mutation->Position);
-			auto [iterator, inserted] = m_Impl->Blocks.try_emplace(blockCoordinate);
+			const auto blockCoordinate = Detail::ToBlock(indexed.Mutation->Position);
+			auto [iterator, inserted] = m_Blocks.try_emplace(blockCoordinate);
 			static_cast<void>(inserted);
-			const auto localIndex = ToIndex(indexed.Mutation->Position, blockCoordinate);
-			if (localIndex >= BlockCellCount)
+			const auto localIndex = Detail::ToIndex(indexed.Mutation->Position, blockCoordinate);
+			if (localIndex >= Detail::BlockCellCount)
 			{
 				throw std::logic_error{"Computed local voxel index is out of range."};
 			}
@@ -438,7 +379,7 @@ namespace UnrealVoxelSim::Voxel::Chunked
 			}
 			if (iterator->second.IsEmpty())
 			{
-				m_Impl->Blocks.erase(iterator);
+				m_Blocks.erase(iterator);
 			}
 		}
 
